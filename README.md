@@ -6,6 +6,10 @@ PostgreSQL-based record linkage for the 2024 Indonesian general election. The ta
 
 ---
 
+## Project Overview
+
+A 2024 campaign in Kebayoran Lama needed an official voter roll linked to field-contact records across six kelurahan for polling-station follow-up. The SQL method uses exact joins and a trigram review pass; 993 matched records were exported for coordinators. Voter names and contacts are not published in this repository.
+
 ## The problem
 
 The campaign team's previous process: open both spreadsheets, search by name manually, compare RT/RW and TPS numbers by eye, copy the matched row. For a district with thousands of voters split across six kelurahan and dozens of polling stations, this took days and was error-prone — a name like "Budi S" could match several people, or zero if the spelling differed by one character between datasets.
