@@ -1,4 +1,4 @@
--- Phase 3: export the merged, confirmed matches for field use.
+-- Phase 4: export merged, reviewed matches for field use.
 
 COPY (
     SELECT nama, jenis_kelamin, usia, kelurahan, kecamatan, rt, rw, tps, kontak

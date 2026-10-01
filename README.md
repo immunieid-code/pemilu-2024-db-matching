@@ -1,64 +1,77 @@
 # Voter Database Matching — Pemilu 2024
 
-PostgreSQL-based record linkage for the 2024 Indonesian general election. The task: match thousands of voter records across two datasets where names, addresses, and poll station codes were inconsistently formatted, incomplete, or had changed between election cycles.
+PostgreSQL-based voter-data reconciliation for the 2024 Indonesian general election. The task: connect a campaign field list with fragmented KPU voter data while keeping geographic context and unresolved records visible for review.
 
-**Tools:** PostgreSQL, Python (psycopg2, Pandas)
+**Tools:** PostgreSQL, SQL
 
 ---
 
 ## Project Overview
 
-A 2024 campaign in Kebayoran Lama needed an official voter roll linked to field-contact records across six kelurahan for polling-station follow-up. The SQL method uses exact joins and a trigram review pass; 993 matched records were exported for coordinators. Voter names and contacts are not published in this repository.
+A 2024 campaign needed field-contact records reconciled with KPU voter data across Dapil 7: five kecamatan, 34 kelurahan and 3,830 TPS-level source PDFs. The field dataset contained 15,156 raw rows; a 14,021-row version was prepared for SQL processing. Voter names and contacts are not published in this repository.
 
 ## The problem
 
-The campaign team's previous process: open both spreadsheets, search by name manually, compare RT/RW and TPS numbers by eye, copy the matched row. For a district with thousands of voters split across six kelurahan and dozens of polling stations, this took days and was error-prone — a name like "Budi S" could match several people, or zero if the spelling differed by one character between datasets.
+The campaign list contained inconsistent kecamatan and kelurahan values, blank RT/RW fields and out-of-scope records. The voter data arrived as thousands of TPS-level files with varying headers. A manual lookup process could not produce a reliable district-wide operating list or show which records still needed review.
 
 ## What I built
 
-A set of SQL queries that handle the full matching in minutes, including cases where names don't match exactly. The queries below are reconstructed for this write-up (the live campaign database wasn't mine to export) but reflect the actual approach and match logic used — see `sql/` for the runnable versions.
+A set of privacy-safe SQL examples reconstructed from the project workflow. They show the method used in the local archive: a strict area-scoped pass, area assembly, residual auditing and targeted retries. See `sql/` for the query sequence.
 
-### Phase 1 — Exact match
+### Phase 1 — Area-scoped exact match
+
+```sql
+SELECT DISTINCT
+    tim.no, dpt.nama, dpt.jenis_kelamin, dpt.usia,
+    dpt.kelurahan, tim.kecamatan, tim.rt, tim.rw,
+    dpt.tps, tim.kontak
+FROM data_tim tim
+JOIN daftar_pemilih dpt
+    ON tim.nama = dpt.nama
+    AND tim.rt = dpt.rt
+    AND tim.rw = dpt.rw
+    AND tim.usia = dpt.usia
+WHERE tim.kecamatan = 'KEBAYORAN LAMA'
+  AND dpt.kelurahan = 'CIPULIR';
+```
+
+Matched on name + RT + RW + age within the corresponding kecamatan and kelurahan. The additional age key and area scope made the first pass deliberately strict.
+
+### Phase 2 — Residual review
+
+Records that did not land in the exact match stayed visible through a `FULL OUTER JOIN` check:
 
 ```sql
 SELECT
-    a.nama,
-    a.rt, a.rw, a.tps,
-    a.kelurahan,
-    b.kontak
-FROM daftar_pemilih a
-JOIN data_tim b
-    ON LOWER(TRIM(a.nama)) = LOWER(TRIM(b.nama))
-    AND a.rt  = b.rt
-    AND a.rw  = b.rw
-    AND a.tps = b.tps
-WHERE a.kecamatan = 'KEBAYORAN LAMA';
+    source.no, source.nama, source.rt, source.rw,
+    source.kelurahan, source.kecamatan, source.kontak
+FROM hasil_match matched
+FULL OUTER JOIN data_tim source
+    ON matched.nama = source.nama
+WHERE matched.nama IS NULL OR source.nama IS NULL;
 ```
 
-Matched on normalized name + RT + RW + TPS. Handled the majority of records.
+The residual list supported targeted cleanup and another exact-match pass without silently dropping or forcing uncertain records.
 
-### Phase 2 — Fuzzy fallback
+### Phase 3 — Reviewed retry
 
-For records that didn't land in the exact match, used trigram similarity (`pg_trgm`) to surface near-matches for human review:
+After reviewing residuals, the follow-up pass retried records on name + RT + RW within the same area. Age was removed only at this reviewed stage:
 
 ```sql
-SELECT
-    a.nama  AS nama_dpt,
-    b.nama  AS nama_tim,
-    similarity(a.nama, b.nama) AS skor,
-    a.rt, a.rw, a.tps
-FROM daftar_pemilih a
-JOIN data_tim b
-    ON similarity(a.nama, b.nama) > 0.55
-    AND a.rt = b.rt
-    AND a.tps = b.tps
-WHERE a.kecamatan = 'KEBAYORAN LAMA'
-ORDER BY skor DESC;
+SELECT DISTINCT
+    tim.no, dpt.nama, dpt.jenis_kelamin, dpt.usia,
+    dpt.kelurahan, tim.kecamatan, tim.rt, tim.rw,
+    dpt.tps, tim.kontak
+FROM residual_field_rows tim
+JOIN staged_voter_rows dpt
+    ON tim.nama = dpt.nama
+    AND tim.rt = dpt.rt
+    AND tim.rw = dpt.rw
+WHERE tim.kecamatan = 'KEBAYORAN LAMA'
+  AND dpt.kelurahan = 'CIPULIR';
 ```
 
-The threshold (0.55) was tuned to surface real near-matches without flooding the review queue with false positives.
-
-### Phase 3 — Export matched results
+### Phase 4 — Export matched results
 
 ```sql
 COPY (
@@ -70,22 +83,20 @@ COPY (
 
 ## Coverage
 
-The final dataset covers Kecamatan Kebayoran Lama across six kelurahan:
-- Grogol Utara
-- Grogol Selatan
-- Kebayoran Lama Utara
-- Kebayoran Lama Selatan
-- Pondok Pinang
-- Cipulir
+The source archive covers five kecamatan and 34 kelurahan:
+- Kebayoran Baru (10 kelurahan)
+- Setiabudi (8 kelurahan)
+- Kebayoran Lama (6 kelurahan)
+- Pesanggrahan (5 kelurahan)
+- Cilandak (5 kelurahan)
 
 Fields: `no`, `nama`, `jenis_kelamin`, `usia`, `kelurahan`, `kecamatan`, `rt`, `rw`, `tps`, `kontak`
 
 ## Result
 
-What previously took the team multiple days of manual cross-referencing finished in minutes. The matched output fed directly into the campaign's door-to-door coordination, sorted by polling station for field workers.
+The project produced structured match outputs organized by area and TPS, enriched with voter demographics and campaign contact fields. Unresolved records remained traceable for follow-up review.
 
 ## Notes
 
 - Voter names and contact details are not included in this repo (privacy).
-- The `pg_trgm` extension must be enabled: `CREATE EXTENSION IF NOT EXISTS pg_trgm;`
 - Tested on PostgreSQL 15.

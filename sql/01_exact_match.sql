@@ -1,15 +1,15 @@
--- Phase 1: exact match on normalized name + RT + RW + TPS.
--- Handles the majority of records where both datasets used consistent formatting.
+-- Phase 1: strict exact match on name + RT + RW + age within one area.
+-- Run per kelurahan, then assemble the reviewed result sets.
 
-SELECT
-    a.nama,
-    a.rt, a.rw, a.tps,
-    a.kelurahan,
-    b.kontak
-FROM daftar_pemilih a
-JOIN data_tim b
-    ON LOWER(TRIM(a.nama)) = LOWER(TRIM(b.nama))
-    AND a.rt  = b.rt
-    AND a.rw  = b.rw
-    AND a.tps = b.tps
-WHERE a.kecamatan = 'KEBAYORAN LAMA';
+SELECT DISTINCT
+    tim.no, dpt.nama, dpt.jenis_kelamin, dpt.usia,
+    dpt.kelurahan, tim.kecamatan, tim.rt, tim.rw,
+    dpt.tps, tim.kontak
+FROM data_tim tim
+JOIN daftar_pemilih dpt
+    ON tim.nama = dpt.nama
+    AND tim.rt = dpt.rt
+    AND tim.rw = dpt.rw
+    AND tim.usia = dpt.usia
+WHERE tim.kecamatan = 'KEBAYORAN LAMA'
+  AND dpt.kelurahan = 'CIPULIR';
